@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "eventId": "00000000-0000-0000-0000-000000000002",
+  "eventName": "account.created",
+  "occurredOn": "2026-10-13T12:01:00Z",
+  "payload": {
+    "userId": "usr-demo-1",
+    "accountId": "00000000-0000-0000-0000-000000000003",
+    "accountType": "SAVINGS",
+    "name": "Demo",
+    "email": "demo@example.test"
+  }
+}

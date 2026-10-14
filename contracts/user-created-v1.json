@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "eventId": "00000000-0000-0000-0000-000000000001",
+  "eventName": "user.created",
+  "occurredOn": "2026-10-13T12:00:00Z",
+  "payload": {
+    "userId": "usr-demo-1",
+    "name": "Demo",
+    "email": "demo@example.test",
+    "role": "MEMBER",
+    "status": "PENDING"
+  }
+}
