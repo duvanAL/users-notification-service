@@ -1,9 +1,11 @@
 package com.jcaa.usersmanagement.domain.model;
 
-import java.util.Objects;
+import com.jcaa.usersmanagement.domain.exception.InvalidEmailDestinationException;
+import com.jcaa.usersmanagement.domain.valueobject.UserEmail;
 import lombok.Value;
 
 @Value
+@lombok.ToString(onlyExplicitlyIncluded = true)
 public class EmailDestinationModel {
 
   String destinationEmail;
@@ -16,18 +18,15 @@ public class EmailDestinationModel {
       final String destinationName,
       final String subject,
       final String body) {
-    this.destinationEmail =
-        validateNotBlank(destinationEmail, "El email del destinatario es requerido.");
-    this.destinationName =
-        validateNotBlank(destinationName, "El nombre del destinatario es requerido.");
-    this.subject = validateNotBlank(subject, "El asunto es requerido.");
-    this.body = validateNotBlank(body, "El cuerpo del mensaje es requerido.");
+    this.destinationEmail = new UserEmail(destinationEmail).value();
+    this.destinationName = validateNotBlank(destinationName);
+    this.subject = validateNotBlank(subject);
+    this.body = validateNotBlank(body);
   }
 
-  private static String validateNotBlank(final String value, final String errorMessage) {
-    Objects.requireNonNull(value, errorMessage);
-    if (value.trim().isEmpty()) {
-      throw new IllegalArgumentException(errorMessage);
+  private static String validateNotBlank(final String value) {
+    if (value == null || value.isBlank()) {
+      throw new InvalidEmailDestinationException();
     }
     return value;
   }

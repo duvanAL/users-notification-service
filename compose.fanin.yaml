@@ -31,11 +31,11 @@ services:
       retries: 30
   mailmock:
     image: wiremock/wiremock:3.9.2
-    ports: ["18089:8080"]
+    ports: ["127.0.0.1:18089:8080"]
     volumes: ["./test-support/brevo-mapping.json:/home/wiremock/mappings/brevo.json:ro"]
   users:
     build: ${USERS_SOURCE:-../users-management-spring-boot-hexagonal-ddd}
-    ports: ["18080:8080"]
+    ports: ["127.0.0.1:18080:8080"]
     depends_on:
       postgres: {condition: service_healthy}
       kafka: {condition: service_healthy}
@@ -61,7 +61,7 @@ services:
       KAFKA_PASSWORD: local
   accounts:
     build: ${ACCOUNTS_SOURCE:-../users-accounts-service}
-    ports: ["18081:8081"]
+    ports: ["127.0.0.1:18081:8081"]
     depends_on:
       postgres: {condition: service_healthy}
       kafka: {condition: service_healthy}
@@ -79,7 +79,7 @@ services:
       KAFKA_PASSWORD: local
   notifications:
     build: .
-    ports: ["18082:8082"]
+    ports: ["127.0.0.1:18082:8082"]
     depends_on:
       kafka: {condition: service_healthy}
     environment:

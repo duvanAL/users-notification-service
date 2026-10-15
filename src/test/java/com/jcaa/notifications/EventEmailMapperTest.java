@@ -4,12 +4,16 @@ import static org.assertj.core.api.Assertions.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jcaa.events.DomainEvent;
+import com.jcaa.notifications.application.mapper.NotificationEmailMapper;
+import com.jcaa.notifications.application.model.NotificationEventType;
+import com.jcaa.notifications.infrastructure.entrypoint.kafka.NotificationEventRequestMapper;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class EventEmailMapperTest {
   private final ObjectMapper json = new ObjectMapper().findAndRegisterModules();
-  private final EventEmailMapper mapper = new EventEmailMapper(json);
+  private final NotificationEventRequestMapper requests = new NotificationEventRequestMapper(json);
+  private final NotificationEmailMapper mapper = new NotificationEmailMapper();
 
   @Test
   void mapsBothProducerEventsAndEscapesRecipientName() throws Exception {
@@ -28,20 +32,29 @@ class EventEmailMapperTest {
                   "00000000-0000-0000-0000-000000000001",
                   "accountType",
                   "SAVINGS"));
-      var delivery = mapper.map(json.writeValueAsString(event));
-      assertThat(delivery.id()).isEqualTo(event.eventId());
-      assertThat(delivery.email().getBody()).contains("&lt;Demo&gt;").doesNotContain("<Demo>");
+      var command = requests.toCommand(json.writeValueAsString(event));
+      var destination = mapper.toEmailDestination(command, NotificationEventType.from(command.eventName()));
+      assertThat(command.eventId()).isEqualTo(event.eventId());
+      assertThat(destination.getBody()).contains("&lt;Demo&gt;").doesNotContain("<Demo>");
     }
   }
 
   @Test
   void rejectsUnknownEventsInvalidSchemasAndMissingData() {
-    assertThatThrownBy(() -> mapper.map("{}")).isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> mapper.map("null")).isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> mapper.map("{")).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> requests.toCommand("{}")).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> requests.toCommand("null")).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> requests.toCommand("{")).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> requests.toCommand(
+        "{\"schemaVersion\":1,\"occurredAt\":\"private@example.test\"}"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Invalid notification event.")
+        .hasNoCause();
     for (String type : new String[] {"unknown.event", "user.created"}) {
       assertThatThrownBy(
-              () -> mapper.map(json.writeValueAsString(DomainEvent.create(type, Map.of()))))
+              () -> {
+                var command = requests.toCommand(json.writeValueAsString(DomainEvent.create(type, Map.of())));
+                mapper.toEmailDestination(command, NotificationEventType.from(command.eventName()));
+              })
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -49,12 +62,13 @@ class EventEmailMapperTest {
   @Test
   void readsPendingLegacyRequestsWithoutChangingTheirStableId() {
     var delivery =
-        mapper.map(
+        requests.toCommand(
             """
 {"schemaVersion":1,"notificationId":"00000000-0000-0000-0000-000000000002",
  "destinationEmail":"demo@example.test","destinationName":"Demo","subject":"Legacy","htmlContent":"<p>Hello</p>"}
 """);
-    assertThat(delivery.id().toString()).endsWith("0002");
-    assertThat(delivery.email().getSubject()).isEqualTo("Legacy");
+    assertThat(delivery.eventId().toString()).endsWith("0002");
+    assertThat(mapper.toEmailDestination(delivery, NotificationEventType.LEGACY_EMAIL_REQUESTED)
+        .getSubject()).isEqualTo("Legacy");
   }
 }

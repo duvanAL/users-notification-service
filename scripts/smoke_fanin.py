@@ -23,12 +23,14 @@ CMD = ["docker", "compose", "-p", "users-fanin-smoke", "-f", "compose.fanin.yaml
 def compose(*args, **kwargs):
     return subprocess.run(CMD + list(args), cwd=ROOT, env=ENV, check=True, **kwargs)
 
-def request(url, body=None, token=None):
+def request(url, body=None, token=None, method=None):
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = "Bearer " + token
     data = None if body is None else json.dumps(body).encode()
-    with urllib.request.urlopen(urllib.request.Request(url, data, headers), timeout=15) as response:
+    with urllib.request.urlopen(urllib.request.Request(url, data, headers, method=method), timeout=15) as response:
+        if response.status == 204:
+            return {}
         return json.load(response)
 
 def wait_for(description, probe, seconds=240):
@@ -71,6 +73,53 @@ try:
         assert len({m["headers"]["idempotencyKey"] for m in messages}) == 2
         return True
     wait_for("Two producers -> Kafka -> notification service -> mocked Brevo",delivered)
+
+    request("http://localhost:18080/api/users/" + user_id,
+            {"name":"Fan In Updated","email":email,"role":"MEMBER","status":"ACTIVE"},
+            token, method="PUT")
+
+    def updated():
+        calls = request("http://localhost:18089/__admin/requests")["requests"]
+        messages = [json.loads(c["request"]["body"]) for c in calls
+                    if c["request"]["url"] == "/v3/smtp/email"]
+        messages = [m for m in messages if m["to"][0]["email"] == email]
+        assert len(messages) == 3
+        assert {m["subject"] for m in messages} == {
+            "Bienvenido - Gestion de Usuarios", "Cuenta creada", "Usuario actualizado"}
+        assert len({m["headers"]["idempotencyKey"] for m in messages}) == 3
+        return True
+
+    wait_for("User update -> typed event -> third mocked email", updated)
+    request("http://localhost:18080/api/users/" + user_id, token=token, method="DELETE")
+
+    def ignored_deletion():
+        logs = compose("logs", "--no-color", "notifications", capture_output=True, text=True).stdout
+        assert "Notification intentionally ignored." in logs and "event=user.deleted" in logs
+        return updated()
+
+    wait_for("Deleted event ignored without email or false SENT", ignored_deletion)
+
+    # Inject malformed semantic data ONLY into this disposable local test database.
+    invalid_id = str(uuid.uuid4())
+    invalid = json.dumps({"schemaVersion":1,"eventId":invalid_id,"eventName":"user.created",
+                          "occurredOn":"2026-10-15T00:00:00Z",
+                          "payload":{"userId":"invalid-demo","name":"Demo","email":"not-an-email"}})
+    compose("exec", "-T", "postgres", "psql", "-U", "local_demo", "-d", "fanin", "-Atc",
+            "INSERT INTO domain_event_outbox(event_id,event_json) VALUES ('" + invalid_id
+            + "','" + invalid.replace("'", "''") + "');", stdout=subprocess.DEVNULL)
+    def rejected_invalid():
+        logs = compose("logs", "--no-color", "notifications", capture_output=True, text=True).stdout
+        assert "Notification rejected after retries." in logs
+        return updated()
+    wait_for("Invalid email rejected before provider", rejected_invalid)
+    dlq = compose("exec", "-T", "kafka", "/opt/kafka/bin/kafka-console-consumer.sh",
+                  "--bootstrap-server", "kafka:9092", "--topic", "user.notification.dlq",
+                  "--from-beginning", "--max-messages", "1", "--timeout-ms", "15000",
+                  capture_output=True, text=True)
+    failure = json.loads(dlq.stdout.strip())
+    assert failure["failureCode"] == "PROCESSING_RETRIES_EXHAUSTED"
+    assert "not-an-email" not in dlq.stdout and "payload" not in failure
+    print("Kafka DLQ contains safe metadata only: OK", flush=True)
     # All application data and event records must have been persisted in their owned schemas.
     result = compose("exec","-T","postgres","psql","-U","local_demo","-d","fanin","-Atc",
                      "SELECT (SELECT count(*) FROM accounts.accounts), "
@@ -78,7 +127,7 @@ try:
                      "(SELECT count(*) FROM domain_event_outbox);",
                      capture_output=True,text=True)
     assert result.stdout.strip() == "1|0|0", "Outboxes were not drained"
-    print("Account persisted; both outboxes drained; fan-in passed.",flush=True)
+    print("Account persisted; both outboxes drained; create/update/delete/invalid-email passed.",flush=True)
 except Exception:
     # Omit logs to avoid exposing ephemeral seed credentials.
     compose("ps")
