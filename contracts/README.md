@@ -1,7 +1,7 @@
 # Contrato Kafka v1
 
 Dos productores independientes convergen en un consumidor:
-- users-management: user.created y user.updated.
+- users-management: user.created, user.updated y user.deleted.
 - users-accounts-service: account.created.
 - users-notification-service: transforma esos eventos en correo Brevo.
 
@@ -18,6 +18,11 @@ Un resultado conserva el formato anterior:
 `{"schemaVersion":1,"notificationId":"UUID del evento","status":"SENT","processedAt":"fecha ISO","failureCode":null}`.
 Para fallo terminal se publica FAILED y un código, junto a metadatos en DLQ.
 La DLQ nueva no copia el correo ni el HTML original.
+
+user.deleted lleva solo userId: el consumidor lo reconoce e ignora intencionalmente sin
+enviar correo, publicar SENT/FAILED ni producir DLQ para un evento válido. No necesita
+name/email; los otros eventos conservan esos campos obligatorios. Un nombre de evento
+desconocido o un deleted sin userId sigue siendo un error, no una omisión silenciosa.
 
 Kafka retiene los registros según su retención (actualmente 72h). Confirmar el procesamiento
 avanza el offset del grupo; no elimina el registro inmediatamente.

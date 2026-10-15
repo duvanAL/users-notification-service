@@ -10,7 +10,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 class DomainEventContractTest {
   @ParameterizedTest
-  @ValueSource(strings = {"user-created-v1.json", "account-created-v1.json"})
+  @ValueSource(strings = {"user-created-v1.json", "account-created-v1.json", "user-deleted-v1.json"})
   void wireExamplesRoundTripAcrossIndependentServices(String file) throws Exception {
     ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
     DomainEvent event =

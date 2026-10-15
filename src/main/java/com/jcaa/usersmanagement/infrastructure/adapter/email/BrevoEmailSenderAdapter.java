@@ -1,6 +1,6 @@
 package com.jcaa.usersmanagement.infrastructure.adapter.email;
 
-import com.jcaa.usersmanagement.application.port.out.EmailSenderPort;
+import com.jcaa.usersmanagement.domain.port.out.EmailSenderPort;
 import com.jcaa.usersmanagement.domain.exception.EmailSenderException;
 import com.jcaa.usersmanagement.domain.model.EmailDestinationModel;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;

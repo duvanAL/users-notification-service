@@ -1,6 +1,6 @@
 package com.jcaa.notifications;
 
-import com.jcaa.usersmanagement.application.port.out.EmailSenderPort;
+import com.jcaa.usersmanagement.domain.port.out.EmailSenderPort;
 import com.jcaa.usersmanagement.infrastructure.adapter.email.BrevoConfig;
 import com.jcaa.usersmanagement.infrastructure.adapter.email.BrevoEmailSenderAdapter;
 import com.jcaa.usersmanagement.infrastructure.adapter.email.BrevoResilience;

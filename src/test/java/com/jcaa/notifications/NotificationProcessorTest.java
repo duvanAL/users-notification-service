@@ -5,7 +5,10 @@ import static org.mockito.Mockito.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jcaa.events.DomainEvent;
-import com.jcaa.usersmanagement.application.port.out.EmailSenderPort;
+import com.jcaa.usersmanagement.domain.port.out.EmailSenderPort;
+import com.jcaa.notifications.application.mapper.NotificationEmailMapper;
+import com.jcaa.notifications.application.service.NotificationEventApplicationService;
+import com.jcaa.notifications.infrastructure.entrypoint.kafka.NotificationEventRequestMapper;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -22,14 +25,16 @@ class NotificationProcessorTest {
 
   private NotificationProcessor processor() {
     return new NotificationProcessor(
-        new EventEmailMapper(json), email, json, kafka, "result", "dlq", 1000);
+        new NotificationEventRequestMapper(json),
+        new NotificationEventApplicationService(email, new NotificationEmailMapper()),
+        json, kafka, "result", "dlq", 1000);
   }
 
   @Test
   void bothPublishersUseStableIdsAndCompatibleOutcomes() throws Exception {
     when(kafka.send(anyString(), anyString(), anyString()))
         .thenReturn(CompletableFuture.completedFuture(null));
-    for (String eventName : new String[] {"user.created", "account.created"}) {
+    for (String eventName : new String[] {"user.created", "user.updated", "account.created"}) {
       DomainEvent event =
           DomainEvent.create(
               eventName,
@@ -52,6 +57,23 @@ class NotificationProcessorTest {
               eq(event.eventId().toString()),
               argThat(s -> s.contains("\"status\":\"SENT\"")));
     }
+  }
+
+  @Test
+  void deletionIsAcknowledgedWithoutEmailOrFalseSentResult() throws Exception {
+    processor().process(json.writeValueAsString(
+        DomainEvent.create("user.deleted", Map.of("userId", "usr-1"))));
+    verifyNoInteractions(email, kafka);
+  }
+
+  @Test
+  void invalidEmailNeverReachesProviderOrSentTopic() throws Exception {
+    String raw = json.writeValueAsString(DomainEvent.create("user.created",
+        Map.of("userId", "usr-1", "name", "Demo", "email", "not-an-email")));
+    assertThatThrownBy(() -> processor().process(raw))
+        .isInstanceOf(com.jcaa.usersmanagement.domain.exception.InvalidUserEmailException.class)
+        .hasMessage("Invalid recipient email.");
+    verifyNoInteractions(email, kafka);
   }
 
   @Test

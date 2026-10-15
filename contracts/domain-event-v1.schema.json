@@ -21,6 +21,7 @@
       "enum": [
         "user.created",
         "user.updated",
+        "user.deleted",
         "account.created"
       ]
     },
@@ -31,9 +32,7 @@
     "payload": {
       "type": "object",
       "required": [
-        "userId",
-        "name",
-        "email"
+        "userId"
       ],
       "additionalProperties": {
         "type": "string"
@@ -41,6 +40,14 @@
     }
   },
   "allOf": [
+    {
+      "if": {
+        "properties": { "eventName": { "enum": ["user.created", "user.updated", "account.created"] } }
+      },
+      "then": {
+        "properties": { "payload": { "required": ["name", "email"] } }
+      }
+    },
     {
       "if": {
         "properties": {

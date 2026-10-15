@@ -2,6 +2,8 @@
 
 Consumidor independiente del patrón fan-in. Recibe user.created, user.updated y account.created
 desde Kafka/Aiven, prepara el correo y lo envía por Brevo.
+Reconoce `user.deleted` con `userId` y lo omite intencionalmente: no envía email, SENT ni DLQ
+para un evento válido. Mantiene lectura de solicitudes legacy pendientes durante la transición.
 Adapta la arquitectura del [ejemplo del profesor](https://github.com/arrietajohn/notification-service)
 a las tecnologías ya utilizadas, manteniendo Java 17 y Spring Boot 3.3.5.
 
@@ -11,6 +13,20 @@ a las tecnologías ya utilizadas, manteniendo Java 17 y Spring Boot 3.3.5.
 Este proyecto no contiene CRUD de usuarios, acceso PostgreSQL, JWT, Valkey ni Supabase Storage.
 Los pocos adaptadores Brevo reutilizados conservan su paquete original por trazabilidad,
 pero sus fuentes están aquí y no requieren dependencias de otro repositorio.
+
+## Recorrido hexagonal
+
+`NotificationProcessor` (adaptador de entrada Kafka) usa `NotificationEventRequestMapper`
+para construir un `ProcessNotificationCommand` inmutable. Invoca el puerto de entrada
+`ProcessNotificationEventUseCase`, implementado por `NotificationEventApplicationService`.
+La aplicación valida el tipo y usa `NotificationEmailMapper` para obtener el objeto de dominio
+`EmailDestinationModel`. El puerto de salida `domain.port.out.EmailSenderPort` es implementado
+por `BrevoEmailSenderAdapter`. Jackson/Kafka no aparecen en el caso de uso ni en el dominio.
+
+`UserEmail` normaliza y valida el formato antes de invocar el proveedor; errores de destinatario
+son excepciones de dominio sin el valor privado en el mensaje. La expresión regular define el
+subconjunto de direcciones soportadas, no verifica la existencia del buzón. `EmailDestinationModel`
+valida los campos restantes y excluye su contenido de `toString`.
 
 ## Kafka y procesamiento
 Los tres topics existentes se conservan. [Contrato y ejemplos](contracts/README.md).
@@ -57,8 +73,10 @@ Requiere Docker Compose y Python 3. Desde este repo:
 python scripts/smoke_fanin.py
 ```
 Levanta temporalmente los tres servicios, PostgreSQL, Kafka y un Brevo simulado.
-Crea un usuario, inicia sesión, crea una cuenta, verifica dos correos simulados
-con eventId diferentes y confirma que ambos outboxes se vacían.
+Crea un usuario, inicia sesión, crea una cuenta y actualiza el usuario: verifica tres correos
+simulados con eventId diferentes. Elimina solo el usuario desechable y verifica omisión sin email;
+inyecta un email inválido en la outbox del PostgreSQL local y verifica DLQ de metadatos.
+Confirma que ambos outboxes se vacían.
 Al finalizar elimina sus contenedores de prueba.
 No usa Aiven, Azure, claves reales ni envía correos.
 USERS_SOURCE y ACCOUNTS_SOURCE permiten indicar otras rutas de clones.

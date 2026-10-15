@@ -1,7 +1,10 @@
 package com.jcaa.notifications;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.jcaa.usersmanagement.application.port.out.EmailSenderPort;
+import com.jcaa.notifications.application.dto.ProcessNotificationCommand;
+import com.jcaa.notifications.application.model.NotificationProcessingResult;
+import com.jcaa.notifications.application.port.in.ProcessNotificationEventUseCase;
+import com.jcaa.notifications.infrastructure.entrypoint.kafka.NotificationEventRequestMapper;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
@@ -19,8 +22,8 @@ import org.springframework.stereotype.Component;
 @ConditionalOnProperty(name = "app.kafka.enabled", havingValue = "true")
 public class NotificationProcessor {
   private static final Logger LOG = LoggerFactory.getLogger(NotificationProcessor.class);
-  private final EventEmailMapper mapper;
-  private final EmailSenderPort email;
+  private final NotificationEventRequestMapper mapper;
+  private final ProcessNotificationEventUseCase useCase;
   private final ObjectMapper json;
   private final KafkaTemplate<String, String> kafka;
   private final String resultTopic;
@@ -28,15 +31,15 @@ public class NotificationProcessor {
   private final int timeout;
 
   public NotificationProcessor(
-      EventEmailMapper mapper,
-      EmailSenderPort email,
+      NotificationEventRequestMapper mapper,
+      ProcessNotificationEventUseCase useCase,
       ObjectMapper json,
       KafkaTemplate<String, String> kafka,
       @Value("${KAFKA_TOPIC_NOTIFICATION_RESULT:user.notification.result}") String resultTopic,
       @Value("${KAFKA_TOPIC_NOTIFICATION_DLQ:user.notification.dlq}") String dlqTopic,
       @Value("${KAFKA_SEND_TIMEOUT_MS:10000}") int timeout) {
     this.mapper = mapper;
-    this.email = email;
+    this.useCase = useCase;
     this.json = json;
     this.kafka = kafka;
     this.resultTopic = resultTopic;
@@ -48,10 +51,14 @@ public class NotificationProcessor {
       topics = "${KAFKA_TOPIC_NOTIFICATION_REQUESTED:user.notification.requested}",
       groupId = "${KAFKA_NOTIFY_GROUP_ID:notify-service}")
   public void process(String raw) {
-    EventEmailMapper.Delivery delivery = mapper.map(raw);
-    email.send(delivery.email(), delivery.id().toString());
-    outcome(delivery.id(), "SENT", null);
-    LOG.info("Notification processed. id={} event={}", delivery.id(), delivery.eventName());
+    ProcessNotificationCommand command = mapper.toCommand(raw);
+    NotificationProcessingResult result = useCase.process(command);
+    if (result.status() == NotificationProcessingResult.Status.IGNORED) {
+      LOG.info("Notification intentionally ignored. id={} event={}", result.eventId(), result.eventName());
+      return; // No provider call, SENT, FAILED or DLQ for a valid deleted event.
+    }
+    outcome(result.eventId(), "SENT", null);
+    LOG.info("Notification processed. id={} event={}", result.eventId(), result.eventName());
   }
 
   public void recover(ConsumerRecord<?, ?> record, Exception exception) {
@@ -74,7 +81,7 @@ public class NotificationProcessor {
             Instant.now()));
     UUID eventId = null;
     try {
-      eventId = mapper.map(String.valueOf(record.value())).id();
+      eventId = mapper.toCommand(String.valueOf(record.value())).eventId();
     } catch (RuntimeException ignored) {
       /* malformed payload has no trusted correlation id */
     }
