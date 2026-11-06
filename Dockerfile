@@ -8,6 +8,7 @@ FROM eclipse-temurin:17-jre
 WORKDIR /app
 RUN groupadd --system app && useradd --system --gid app --home-dir /app app
 COPY --from=build --chown=app:app /app/target/*.jar app.jar
+COPY --chown=app:app deployment/supabase-root-2021.crt /app/certs/supabase-root-2021.crt
 USER app:app
 EXPOSE 8080
 ENTRYPOINT ["java", "-XX:MaxRAMPercentage=65.0", "-jar", "/app/app.jar"]
