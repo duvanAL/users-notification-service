@@ -103,4 +103,17 @@ class NotificationProcessorTest {
         .doesNotContain("private-email");
     verifyNoInteractions(email);
   }
+  @Test
+  void historyFailureDoesNotBlockEmailOrTriggerAnotherProviderCall() throws Exception {
+    when(kafka.send(anyString(), anyString(), anyString())).thenReturn(CompletableFuture.completedFuture(null));
+    var history = mock(com.jcaa.notifications.application.port.out.NotificationHistoryPort.class);
+    doThrow(new IllegalStateException("database unavailable")).when(history)
+        .record(any(), any(), any(), any(), any());
+    var processor = processor();
+    org.springframework.test.util.ReflectionTestUtils.setField(processor, "history", history);
+    var event = DomainEvent.create("user.created", Map.of("userId", "usr-1", "name", "Demo", "email", "demo@example.test"));
+    processor.process(json.writeValueAsString(event));
+    verify(email, times(1)).send(any(), eq(event.eventId().toString()));
+    verify(kafka).send(eq("result"), eq(event.eventId().toString()), argThat(body -> body.contains("SENT")));
+  }
 }

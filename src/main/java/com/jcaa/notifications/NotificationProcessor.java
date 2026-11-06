@@ -29,6 +29,8 @@ public class NotificationProcessor {
   private final String resultTopic;
   private final String dlqTopic;
   private final int timeout;
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  private com.jcaa.notifications.application.port.out.NotificationHistoryPort history;
 
   public NotificationProcessor(
       NotificationEventRequestMapper mapper,
@@ -52,11 +54,15 @@ public class NotificationProcessor {
       groupId = "${KAFKA_NOTIFY_GROUP_ID:notify-service}")
   public void process(String raw) {
     ProcessNotificationCommand command = mapper.toCommand(raw);
+    if (history != null && !"user.deleted".equals(command.eventName())) {
+      recordHistory(command, "PENDING", null);
+    }
     NotificationProcessingResult result = useCase.process(command);
     if (result.status() == NotificationProcessingResult.Status.IGNORED) {
       LOG.info("Notification intentionally ignored. id={} event={}", result.eventId(), result.eventName());
       return; // No provider call, SENT, FAILED or DLQ for a valid deleted event.
     }
+    recordHistory(command, "SENT", null);
     outcome(result.eventId(), "SENT", null);
     LOG.info("Notification processed. id={} event={}", result.eventId(), result.eventName());
   }
@@ -80,17 +86,30 @@ public class NotificationProcessor {
             "failedAt",
             Instant.now()));
     UUID eventId = null;
+    ProcessNotificationCommand recovered = null;
     try {
-      eventId = mapper.toCommand(String.valueOf(record.value())).eventId();
+      recovered = mapper.toCommand(String.valueOf(record.value()));
+      eventId = recovered.eventId();
     } catch (RuntimeException ignored) {
       /* malformed payload has no trusted correlation id */
     }
+    if (recovered != null) recordHistory(recovered, "FAILED", "PROCESSING_RETRIES_EXHAUSTED");
     if (eventId != null) outcome(eventId, "FAILED", "PROCESSING_RETRIES_EXHAUSTED");
     LOG.warn(
         "Notification rejected after retries. topic={} partition={} offset={}",
         record.topic(),
         record.partition(),
         record.offset());
+  }
+
+  private void recordHistory(ProcessNotificationCommand command, String status, String failure) {
+    if (history == null) return;
+    try {
+      history.record(command.eventId(), command.payload().get("userId"), command.eventName(), status, failure);
+    } catch (RuntimeException unavailable) {
+      // History is a secondary projection: a database outage must not resend accepted email.
+      LOG.warn("Notification history write failed. id={} status={}", command.eventId(), status);
+    }
   }
 
   private void outcome(UUID id, String status, String failure) {
